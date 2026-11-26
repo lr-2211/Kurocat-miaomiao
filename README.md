@@ -11,6 +11,12 @@
 - [上游 README](README.upstream.zh-CN.md) · [English](README.en.md) · [日本語](README.ja.md)
 - 沿用 [MIT 许可证](LICENSE)，保留原有版权及第三方署名。内置「大肥鱼」素材源自 [PC2005-cloud/dsh-pet](https://github.com/PC2005-cloud/dsh-pet)，参考 [QCYTSN/dsh-dafeiyu](https://github.com/QCYTSN/dsh-dafeiyu)。详见[素材许可证](src/assets/dafeiyu/LICENSE-MIT.txt)。
 
+## 彩狸猫妙妙
+
+| 妙妙原照 | 妙妙的 3D 桌宠形象 |
+| :---: | :---: |
+| <img src="./docs/miaomiao-photo.png" alt="彩狸猫妙妙的原照" width="280"> | <img src="./docs/miaomiao-3d.png" alt="KuroCat 中的 3D 妙妙" width="280"> |
+
 ## 妙妙版的改动
 
 - 新增 3D「妙妙」。根据妙妙的照片设计了专属轮廓、橄榄绿眼睛、左右不对称的棕色与金橙色脸斑、橙棕环纹尾巴，并修整了左眼下方的斑块。
