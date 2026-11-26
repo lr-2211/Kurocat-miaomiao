@@ -2,7 +2,7 @@ import './style.css';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { DEFAULT_TAIL_KEY_IDS, type KeyboardOrientation, type TailKeyMode } from './catEngine';
-import { DEFAULT_BUILTIN_CATS, type CatSkinConfig } from './catSkins';
+import { catOrDefault, DEFAULT_BUILTIN_CATS, DEFAULT_CAT_BREED, type CatSkinConfig } from './catSkins';
 import type { KeyboardLayoutId } from './keyboardLayout';
 import {
   applyDomTranslations,
@@ -70,7 +70,7 @@ let settings: AppSettings = {
   showKeyBubbles: true,
   soundEnabled: true,
   autostart: false,
-  catBreed: 'black',
+  catBreed: DEFAULT_CAT_BREED,
   mcpEnabled: true,
   mcpPort: 27420,
   keyboardLayout: '65',
@@ -265,7 +265,7 @@ function syncUI(): void {
     tailKeysCountEl.textContent = t('menu.tail_keys_count', { count: tailIds.length });
   }
 
-  const activeCat = catList.find((c) => c.id === settings.catBreed) ?? catList[0];
+  const activeCat = catOrDefault(catList, settings.catBreed);
   renderBreedPills();
 
   const renderMode = settings.renderMode === '2d' ? '2d' : '3d';
@@ -661,14 +661,14 @@ async function bootstrap(): Promise<void> {
     if (params.get('obs') === '1') settings.obsEnabled = true;
     const qTab = params.get('tab');
     if (qTab === 'appearance' || qTab === 'system') activeTab = qTab;
-    // Populate all 7 built-in cats for realistic layout verification outside Tauri
+    // Populate the built-in cats for layout verification outside Tauri.
     catList = [
       ...DEFAULT_BUILTIN_CATS.slice(0, 2),
       { ...DEFAULT_BUILTIN_CATS[0], id: 'orange-tabby', name: '大橘猫', emoji: '🍊', accentColor: '#ff9f43' },
       { ...DEFAULT_BUILTIN_CATS[0], id: 'calico', name: '三花猫', emoji: '🌸', accentColor: '#ff7eb3' },
       { ...DEFAULT_BUILTIN_CATS[0], id: 'tuxedo', name: '奶牛猫', emoji: '🐄', accentColor: '#d0d7de' },
       { ...DEFAULT_BUILTIN_CATS[0], id: 'siamese', name: '暹罗猫', emoji: '☕', accentColor: '#c9a679' },
-      DEFAULT_BUILTIN_CATS[2],
+      ...DEFAULT_BUILTIN_CATS.slice(2),
     ];
   }
   syncUI();

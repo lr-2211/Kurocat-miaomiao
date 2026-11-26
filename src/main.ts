@@ -10,7 +10,7 @@ import {
 } from './catEngine';
 import { catAudio } from './audio';
 import { AgentCompanionController, type AgentCompanionEvent } from './agentCompanion';
-import { DEFAULT_BUILTIN_CATS, type CatSkinConfig } from './catSkins';
+import { catOrDefault, DEFAULT_BUILTIN_CATS, DEFAULT_CAT_BREED, type CatSkinConfig } from './catSkins';
 import {
   getKeyboardLayout,
   resolveKeyByVk,
@@ -141,7 +141,7 @@ let settings: AppSettings = {
   showKeyBubbles: true,
   soundEnabled: true,
   autostart: false,
-  catBreed: 'black',
+  catBreed: DEFAULT_CAT_BREED,
   mcpEnabled: true,
   mcpPort: 27420,
   keyboardLayout: '65',
@@ -312,7 +312,7 @@ function wants3DNow(): boolean {
 
 function syncEngine3DState(): void {
   if (!engine3d) return;
-  const activeCat = catList.find((c) => c.id === settings.catBreed) ?? catList[0];
+  const activeCat = catOrDefault(catList, settings.catBreed);
   const kbLayout: KeyboardLayoutId = settings.keyboardLayout === '108' ? '108' : '65';
   const kbOrient: KeyboardOrientation = settings.keyboardOrientation === 'viewer' ? 'viewer' : 'cat';
   const tailMode: TailKeyMode =
@@ -517,7 +517,7 @@ function syncMenuUI(): void {
   if (tailKeysCountEl) {
     tailKeysCountEl.textContent = t('menu.tail_keys_count', { count: tailIds.length });
   }
-  const activeCat = catList.find((c) => c.id === settings.catBreed) ?? catList[0];
+  const activeCat = catOrDefault(catList, settings.catBreed);
   renderBreedPills();
 
   const renderMode: DesktopRenderMode = settings.renderMode === '2d' ? '2d' : '3d';
@@ -568,7 +568,7 @@ function syncMenuUI(): void {
 
   const fpsCapNum = settings.fpsCap === 30 ? 30 : 0;
   engine.showKeyBubbles = settings.showKeyBubbles;
-  engine.setCatAppearance(activeCat?.id || 'black', activeCat);
+  engine.setCatAppearance(activeCat.id, activeCat);
   engine.setHeadphones(shouldWearHeadphonesNow());
   engine.setKeyboardConfig(kbLayout, kbOrient);
   engine.setTailKeyConfig(tailMode, tailIds);

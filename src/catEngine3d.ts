@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import {
+  MIAOMIAO_ID,
   resolveCatContour,
   type CatContourResolved,
   type CatEarShape,
@@ -41,6 +42,9 @@ const EYE_MAX_RY = 0.160;
 const Z_SCALE = 0.82;
 const BODY_H = 1.98;
 const HEAD_CY = 1.56;
+const PET_BITE_THRESHOLD_MS = 3000;
+const PET_STROKE_GAP_MS = 450;
+const PET_BITE_DURATION = 0.62;
 
 interface PawTrack3D {
   side: -1 | 1;
@@ -358,6 +362,7 @@ function createEyeShaderMaterial(side: -1 | 1): THREE.ShaderMaterial {
       uPupilRad: { value: new THREE.Vector2(0.43, 0.67) },
       uCross: { value: 0 },
       uRestSquint: { value: 0 },
+      uAlmond: { value: 0 },
       uCurious: { value: 0 },
       uShineAmt: { value: 0 },
       uIs3D: { value: 1 },
@@ -389,6 +394,7 @@ function createEyeShaderMaterial(side: -1 | 1): THREE.ShaderMaterial {
       uniform vec2 uPupilRad;
       uniform float uCross;
       uniform float uRestSquint;
+      uniform float uAlmond;
       uniform float uCurious;
       uniform float uShineAmt;
       uniform float uIs3D;
@@ -402,7 +408,8 @@ function createEyeShaderMaterial(side: -1 | 1): THREE.ShaderMaterial {
         vec2 rotEye = vec2(vEye.x * ct - vEye.y * st, vEye.x * st + vEye.y * ct);
         vec2 p = rotEye / max(uScale, vec2(0.05));
 
-        float r = length(p);
+        float almond = max(0.42, 1.0 - 0.34 * pow(abs(p.x), 1.6));
+        float r = length(vec2(p.x, p.y / mix(1.0, almond, uAlmond)));
         float aa = max(fwidth(r), 0.016);
         float outerMask = 1.0 - smoothstep(1.0 - aa, 1.0 + aa, r);
         if (outerMask < 0.004) discard;
@@ -470,6 +477,53 @@ function createEyeShaderMaterial(side: -1 | 1): THREE.ShaderMaterial {
         float alpha = outerMask * lidAlpha;
         if (alpha < 0.008) discard;
         gl_FragColor = vec4(col, alpha);
+        #include <colorspace_fragment>
+      }
+    `,
+  });
+}
+
+function createBiteMouthMaterial(): THREE.ShaderMaterial {
+  return new THREE.ShaderMaterial({
+    uniforms: {
+      uOpen: { value: 0 },
+      uRim: { value: new THREE.Color('#664139') },
+      uCavity: { value: new THREE.Color('#381c23') },
+      uTeeth: { value: new THREE.Color('#fff4dd') },
+      uTongue: { value: new THREE.Color('#b76172') },
+    },
+    transparent: true,
+    depthWrite: false,
+    vertexShader: `
+      varying vec2 vMouth;
+      void main() {
+        vMouth = uv * 2.0 - 1.0;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }
+    `,
+    fragmentShader: `
+      uniform float uOpen;
+      uniform vec3 uRim, uCavity, uTeeth, uTongue;
+      varying vec2 vMouth;
+      void main() {
+        // Keep the upper lip near the nose while the lower edge opens and snaps shut.
+        float center = 0.48 - 0.67 * uOpen;
+        vec2 p = vec2(vMouth.x / (0.65 + 0.30 * uOpen),
+                      (vMouth.y - center) / (0.06 + 0.68 * uOpen));
+        float d = length(p);
+        float edge = max(fwidth(d), 0.025);
+        float alpha = 1.0 - smoothstep(1.0 - edge, 1.0 + edge, d);
+        if (alpha < 0.004) discard;
+
+        vec3 color = mix(uCavity, uRim, smoothstep(0.82, 0.99, d));
+        float tongue = length((p - vec2(0.0, -0.72)) / vec2(0.63, 0.34));
+        color = mix(color, uTongue, (1.0 - smoothstep(0.92, 1.04, tongue)) * (1.0 - smoothstep(0.82, 0.98, d)));
+        float fangDepth = clamp((0.83 - p.y) / 0.70, 0.0, 1.0);
+        float fangSide = abs(abs(p.x) - 0.47) - 0.16 * (1.0 - fangDepth);
+        float fangs = (1.0 - smoothstep(-0.035, 0.035, fangSide))
+                    * smoothstep(0.10, 0.19, p.y) * (1.0 - smoothstep(0.81, 0.89, p.y));
+        color = mix(color, uTeeth, fangs * smoothstep(0.22, 0.52, uOpen) * (1.0 - smoothstep(0.87, 0.99, d)));
+        gl_FragColor = vec4(color, alpha);
         #include <colorspace_fragment>
       }
     `,
@@ -559,6 +613,7 @@ export class KuroCatEngine3D {
   private readonly bodyMesh: THREE.Mesh;
   private outlineSamplePts: THREE.Vector3[];
   private currentContour: CatContourResolved = resolveCatContour(null);
+  private isMiaomiao = false;
   private lastContourKey = '';
   private tailFluffy = false;
   private earMountX = 0.295;
@@ -568,6 +623,7 @@ export class KuroCatEngine3D {
   private whiskerMesh!: THREE.Mesh;
   private noseMesh!: THREE.Mesh;
   private mouthTube!: TaperTube3D;
+  private biteMouth: THREE.Mesh<THREE.PlaneGeometry, THREE.ShaderMaterial> | null = null;
 
   // Head mount tracks exact head pivot inside the continuous one-piece body mesh
   private readonly headMount = new THREE.Group();
@@ -774,6 +830,11 @@ export class KuroCatEngine3D {
   private petting = false;
   private petUntil = -100;
   private petX = 0;
+  private petStreakStartMs: number | null = null;
+  private lastPetStrokeMs = -Infinity;
+  private bitDuringPetStreak = false;
+  private petBiteAt = -Infinity;
+  private petBiteDirection = 0;
   private rub = 0;
   private squintAmt = 0;
   private asleep = false;
@@ -1463,9 +1524,11 @@ export class KuroCatEngine3D {
   private applyContourGeometry(skin: CatSkinConfig): void {
     const contour = resolveCatContour(skin);
     this.currentContour = contour;
+    this.isMiaomiao = skin.id === MIAOMIAO_ID;
     this.tailFluffy = Boolean(skin.tailFluffy);
 
     const key = [
+      this.isMiaomiao,
       contour.faceShape,
       contour.headWidth.toFixed(3),
       contour.jawSquareness.toFixed(3),
@@ -1533,6 +1596,13 @@ export class KuroCatEngine3D {
           }
         }
       }
+      if (this.isMiaomiao) {
+        // Offset the rump into the reference's three-quarter pose while leaving the face
+        // and shoulder attachment points on the existing animation rig.
+        const hip = 1 - smoothstep(0.31, 1.28, y);
+        x = x * (1 + 0.21 * hip) - 0.28 * hip;
+        z = z * (1 + 0.11 * hip) - 0.09 * hip;
+      }
       bPos.setXYZ(i, x, y, z * Z_SCALE);
     }
     nextBodyGeo.computeVertexNormals();
@@ -1560,7 +1630,9 @@ export class KuroCatEngine3D {
           : 0) +
       (isOval ? 0.028 : 0);
     this.earBaseTilt =
-      contour.earShape === 'wide'
+      this.isMiaomiao
+        ? 0.15
+        : contour.earShape === 'wide'
         ? 0.24
         : contour.earShape === 'round'
           ? 0.30
@@ -1577,8 +1649,9 @@ export class KuroCatEngine3D {
 
     // Re-conform curved eyes, blush, closed arcs, squint slits, nose, mouth & whiskers onto the new face surface
     for (const e of this.eyes) {
-      const lx = e.s * 0.232;
-      const ly = 0.105;
+      const lx = e.s * (this.isMiaomiao ? 0.224 : 0.232);
+      const ly = this.isMiaomiao ? 0.091 : 0.105;
+      const lidWidth = this.isMiaomiao ? 0.123 : 0.132;
       const oldEye = e.mesh.geometry;
       e.mesh.geometry = this.makeCurvedFacePatchGeo(lx, ly, EYE_MAX_RX, EYE_MAX_RY, 0.024, 20);
       oldEye.dispose();
@@ -1596,7 +1669,7 @@ export class KuroCatEngine3D {
 
       e.closedArcTube.update(
         (t, out) => {
-          const x = lx + mix(-0.132, 0.132, t);
+          const x = lx + mix(-lidWidth, lidWidth, t);
           const y = ly - 0.042 * Math.sin(t * Math.PI);
           out.set(x, y, this.surfaceZ(x, y) + 0.028);
         },
@@ -1605,7 +1678,7 @@ export class KuroCatEngine3D {
 
       e.squintSlitTube.update(
         (t, out) => {
-          const x = lx + mix(-0.132, 0.132, t);
+          const x = lx + mix(-lidWidth, lidWidth, t);
           const y = ly - 0.012 * Math.sin(t * Math.PI) - e.s * (t - 0.5) * 0.016;
           out.set(x, y, this.surfaceZ(x, y) + 0.028);
         },
@@ -1615,6 +1688,7 @@ export class KuroCatEngine3D {
 
     const NY = -0.042;
     this.noseMesh.position.set(0, NY, this.surfaceZ(0, NY) + 0.024);
+    this.noseMesh.scale.set(this.isMiaomiao ? 1.24 : 1, this.isMiaomiao ? 1.08 : 1, 1);
     this.mouthTube.update(
       (t, out) => {
         const x = mix(-0.064, 0.064, t);
@@ -1627,6 +1701,19 @@ export class KuroCatEngine3D {
     const oldWhiskers = this.whiskerMesh.geometry;
     this.whiskerMesh.geometry = this.buildWhiskersGeometry();
     oldWhiskers.dispose();
+
+    if (this.isMiaomiao) {
+      const geometry = this.makeCurvedFacePatchGeo(0, -0.174, 0.180, 0.135, 0.033, 12);
+      if (this.biteMouth) {
+        this.biteMouth.geometry.dispose();
+        this.biteMouth.geometry = geometry;
+      } else {
+        this.biteMouth = new THREE.Mesh(geometry, createBiteMouthMaterial());
+        this.biteMouth.renderOrder = 13;
+        this.biteMouth.visible = false;
+        this.faceGroup.add(this.biteMouth);
+      }
+    }
   }
 
   /** Mathematically exact Z depth on the front face of our Lathe/squircle body at headMount-local (x, y). */
@@ -1764,6 +1851,7 @@ export class KuroCatEngine3D {
       this.idleTimer = null;
     }
     this.isIdlePacing = false;
+    this.cancelPetBite();
   }
 
   public setGameActive(active: boolean): void {
@@ -1899,6 +1987,7 @@ export class KuroCatEngine3D {
   };
 
   public setCatSkin(skin: CatSkinConfig): void {
+    if (this.currentSkin?.id !== skin.id) this.cancelPetBite();
     this.currentSkin = skin;
     this.applyContourGeometry(skin);
     const p = resolveFurPalette3D(skin, this.renderStyle);
@@ -1927,6 +2016,7 @@ export class KuroCatEngine3D {
       (e.mat.uniforms.uPupilCol.value as THREE.Color).set(p.pupil);
       (e.mat.uniforms.uLashCol.value as THREE.Color).set(lashCol);
       e.mat.uniforms.uRestSquint.value = this.currentContour.eyeSquint;
+      e.mat.uniforms.uAlmond.value = this.isMiaomiao ? 1.0 : 0.0;
       e.mat.uniforms.uIs3D.value = this.renderStyle === '3d' ? 1.0 : 0.0;
       e.mat.uniforms.uLimbalAmt.value = p.isDarkFur ? 0.22 : 0.56;
     }
@@ -2007,6 +2097,7 @@ export class KuroCatEngine3D {
   public setPrivacyMode(active: boolean): void {
     this.privacyMode = active;
     if (active) {
+      this.cancelPetBite();
       this.desk.releaseAllKeys();
       this.paws.L.down = false;
       this.paws.R.down = false;
@@ -2199,18 +2290,12 @@ export class KuroCatEngine3D {
       this.cursorActiveAt = this.elapsed;
       this.wakeRendering();
     }
-    if (overCat && !this.leftMouseDown && !this.rightMouseDown && delta > 0.006) {
-      this.petting = true;
-      this.petUntil = this.elapsed + 0.36;
-      this.petX = clamp(this.cursorNdc.x * 2.0, -1, 1);
-      this.wake('gentle');
-      this.wakeAt = -100;
-      this.isCross = false;
-      this.annoy = 0;
-    }
+    if (!overCat || this.leftMouseDown || this.rightMouseDown) this.resetPetStreak();
+    else if (delta > 0.006) this.recordPetStroke(this.cursorNdc.x * 2, 0.36);
   }
 
   public onMouseDown(btn: string): void {
+    this.resetPetStreak();
     this.wake('abrupt');
     this.lastMouse = this.elapsed;
     this.paws.L.lastActive = this.elapsed;
@@ -2273,17 +2358,67 @@ export class KuroCatEngine3D {
       this.raycaster.setFromCamera(this.cursorNdc, this.camera);
       const hits = this.raycaster.intersectObjects(this.petMeshes, false);
       overHead = hits.length > 0 && hits[0].point.y >= 1.15;
-      if (overHead) {
-        this.petting = true;
-        this.petUntil = this.elapsed + 0.30;
-        this.petX = clamp(this.cursorNdc.x * 2.5, -1, 1);
-        this.wake('gentle');
-        this.wakeAt = -100;
-        this.isCross = false;
-        this.annoy = 0;
-      }
     }
+    if (overHead) this.recordPetStroke(this.cursorNdc.x * 2.5, 0.30);
+    else this.resetPetStreak();
     return overHead;
+  }
+
+  private resetPetStreak(): void {
+    this.petStreakStartMs = null;
+    this.lastPetStrokeMs = -Infinity;
+    this.bitDuringPetStreak = false;
+  }
+
+  private cancelPetBite(): void {
+    this.resetPetStreak();
+    if (this.petBiteAt !== -Infinity) {
+      this.isCross = false;
+      this.annoy = 0;
+    }
+    this.petBiteAt = -Infinity;
+    this.setBiteMouthOpen(0);
+  }
+
+  private setBiteMouthOpen(amount: number): void {
+    if (!this.biteMouth) return;
+    this.biteMouth.visible = amount > 0.035;
+    this.biteMouth.material.uniforms.uOpen.value = amount;
+    this.mouthTube.mesh.visible = !this.biteMouth.visible;
+  }
+
+  private recordPetStroke(x: number, linger: number): void {
+    if (this.privacyMode) return;
+    const direction = clamp(x, -1, 1);
+    if (this.isMiaomiao) {
+      // Use a monotonic input clock, independent of render FPS and animation time scaling.
+      const now = performance.now();
+      if (now - this.lastPetStrokeMs > PET_STROKE_GAP_MS) this.resetPetStreak();
+      this.lastPetStrokeMs = now;
+      if (this.bitDuringPetStreak || this.elapsed - this.petBiteAt < PET_BITE_DURATION) return;
+
+      this.petStreakStartMs ??= now;
+      if (now - this.petStreakStartMs >= PET_BITE_THRESHOLD_MS) {
+        this.bitDuringPetStreak = true;
+        this.petBiteAt = this.elapsed;
+        this.petBiteDirection = direction;
+        this.petting = false;
+        this.petUntil = -100;
+        this.squintAmt = 0;
+        this.idleAct = null;
+        this.triggerCrossDemo();
+        return;
+      }
+      this.curiousUntil = -100;
+    }
+
+    this.petting = true;
+    this.petUntil = this.elapsed + linger;
+    this.petX = direction;
+    this.wake('gentle');
+    this.wakeAt = -100;
+    this.isCross = false;
+    this.annoy = 0;
   }
 
   public getStateSummary(): {
@@ -2490,7 +2625,8 @@ export class KuroCatEngine3D {
     // Curious trigger from swift cursor sweep
     this.pointerSamples = this.pointerSamples.filter((s) => t - s.t <= 0.22);
     const pointerSpeed = this.pointerSamples.reduce((a, s) => a + s.dist, 0) / 0.22;
-    const canCurious = !this.asleep && !this.privacyMode && !this.isCross && t - this.lastKey > 0.9;
+    const canCurious = !this.asleep && !this.privacyMode && !this.isCross && t - this.lastKey > 0.9
+      && !(this.isMiaomiao && petActive);
     if (canCurious && this.pointerSamples.length >= 4 && pointerSpeed > 0.92) {
       this.curiousUntil = Math.max(this.curiousUntil, t + 2.2);
     }
@@ -2522,6 +2658,15 @@ export class KuroCatEngine3D {
       this.annoy = Math.max(0, this.annoy - 0.35 * dt);
     }
     const cross = clamp(this.sCross.step(this.isCross ? 1 : 0, dt), 0, 1);
+    const biteElapsed = t - this.petBiteAt;
+    const biting = this.isMiaomiao && !this.privacyMode && !this.asleep && biteElapsed < PET_BITE_DURATION;
+    const jawOpen = biting
+      ? smoothstep(0.01, 0.15, biteElapsed) * (1 - smoothstep(0.26, 0.36, biteElapsed))
+      : 0;
+    const biteLunge = biting
+      ? smoothstep(0.11, 0.30, biteElapsed) * (1 - smoothstep(0.33, PET_BITE_DURATION, biteElapsed))
+      : 0;
+    this.setBiteMouthOpen(jawOpen);
 
     // Calm idle fidgets
     if (this.idleAct && t > this.idleAct.t0 + this.idleAct.dur) this.idleAct = null;
@@ -2583,8 +2728,8 @@ export class KuroCatEngine3D {
       curious * 0.04 +
       Math.sin(t * 2.0) * 0.014;
 
-    this.bend.x = this.sShift.step(targetShift, dt);
-    this.bend.z = this.sHunch.step(targetHunch, dt);
+    this.bend.x = this.sShift.step(targetShift, dt) + 0.19 * this.petBiteDirection * biteLunge;
+    this.bend.z = this.sHunch.step(targetHunch, dt) + 0.29 * biteLunge;
     this.bend.squash = this.sSquash.step(targetSquash, dt);
     this.bend.bellySwell = this.sleepAmt * 0.095 + (typingActive ? 0.035 : 0);
 
@@ -2633,6 +2778,13 @@ export class KuroCatEngine3D {
     if (cross > 0.05) {
       targetYaw = mix(targetYaw, this.crossHuffDir * 0.20, cross * 0.65);
       targetGazeX = mix(targetGazeX, this.crossHuffDir * 0.72, cross * 0.65);
+    }
+    if (biting) {
+      targetYaw = this.petBiteDirection * 0.31;
+      targetPitch = -0.11 + 0.23 * biteLunge;
+      targetRoll = this.petBiteDirection * 0.065;
+      targetGazeX = this.petBiteDirection * 0.82;
+      targetGazeY = gy * 0.45;
     }
 
     const wakeEl = t - this.wakeAt;
@@ -2705,8 +2857,8 @@ export class KuroCatEngine3D {
     }
 
     const isSleepOrPrivacy = this.sleepAmt > 0.45 || this.privacyClose > 0.45;
-    const isPetSquint = !isSleepOrPrivacy && this.squintAmt > 0.38 && blinkClose < 0.3;
-    const isBlinkClosed = !isSleepOrPrivacy && !isPetSquint && blinkClose > 0.58;
+    const isPetSquint = !isSleepOrPrivacy && !biting && this.squintAmt > 0.38 && blinkClose < 0.3;
+    const isBlinkClosed = !isSleepOrPrivacy && !biting && !isPetSquint && blinkClose > 0.58;
     const showOpenEye = !isSleepOrPrivacy && !isPetSquint && !isBlinkClosed;
 
     this.blushMat.opacity += ((petActive ? 0.46 : 0) - this.blushMat.opacity) * approach(8, dt);
@@ -2725,8 +2877,11 @@ export class KuroCatEngine3D {
       e.squintSlit.visible = isPetSquint;
 
       if (showOpenEye) {
-        const irisRx = 0.156 * (1 + curious * 0.06);
-        const irisRy = Math.max(0.02, 0.136 * (1 + curious * 0.09) * (1 - blinkClose * 0.8));
+        const irisRx = (this.isMiaomiao ? 0.144 : 0.156) * (1 + curious * 0.06);
+        const irisRy = Math.max(
+          0.02,
+          (this.isMiaomiao ? 0.109 : 0.136) * (1 + curious * 0.09) * (1 - blinkClose * 0.8),
+        );
 
         const pRx = clamp(
           (0.064 + curious * 0.048 + this.excite * 0.008) * (1 - cross * 0.32),
@@ -2741,7 +2896,7 @@ export class KuroCatEngine3D {
         const py = clamp(gazeY * maxTy, -maxTy, maxTy);
 
         (e.mat.uniforms.uScale.value as THREE.Vector2).set(irisRx / EYE_MAX_RX, irisRy / EYE_MAX_RY);
-        e.mat.uniforms.uTilt.value = e.s * -(0.06 + 0.06 * (typingActive ? 1 : 0));
+        e.mat.uniforms.uTilt.value = e.s * -((this.isMiaomiao ? 0.105 : 0.06) + 0.06 * (typingActive ? 1 : 0));
         (e.mat.uniforms.uPupilCenter.value as THREE.Vector2).set(px / irisRx, py / irisRy);
         (e.mat.uniforms.uPupilRad.value as THREE.Vector2).set(pRx / irisRx, pRy / irisRy);
         e.mat.uniforms.uCross.value = cross;

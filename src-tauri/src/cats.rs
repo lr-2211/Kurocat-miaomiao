@@ -529,6 +529,8 @@ pub fn builtin_cats() -> Vec<CatSkinConfig> {
             body_chubbiness: None,
             spots: vec![],
         },
+        serde_json::from_str(include_str!("../../src/assets/miaomiao-skin.json"))
+            .expect("embedded Miaomiao skin config"),
     ]
 }
 

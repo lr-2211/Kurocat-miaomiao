@@ -3,8 +3,8 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-fn default_cat_breed() -> String {
-    "black".to_string()
+pub(crate) fn default_cat_breed() -> String {
+    "miaomiao".to_string()
 }
 
 fn default_mcp_enabled() -> bool {
@@ -551,6 +551,8 @@ mod tests {
             "autostart": false
         }"#;
         let parsed: AppSettings = serde_json::from_str(legacy).expect("legacy json should parse");
+        assert_eq!(parsed.cat_breed, "miaomiao");
+        assert_eq!(parsed.render_mode, "3d");
         assert_eq!(parsed.tail_key_mode, "smart");
         assert_eq!(parsed.tail_key_ids, default_tail_key_ids());
     }

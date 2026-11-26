@@ -1,3 +1,5 @@
+import miaomiaoSkin from './assets/miaomiao-skin.json';
+
 export interface CatSpot {
   part: 'head' | 'body' | 'leftArm' | 'rightArm';
   x: number;
@@ -272,6 +274,16 @@ export function resolveCustomSkin(raw: CatSkinConfig): ResolvedSkin {
   };
 }
 
+export const MIAOMIAO_ID = 'miaomiao';
+export const DEFAULT_CAT_BREED = MIAOMIAO_ID;
+const MIAOMIAO_SKIN: CatSkinConfig = miaomiaoSkin as CatSkinConfig;
+
+export function catOrDefault(cats: readonly CatSkinConfig[], breedId: string): CatSkinConfig {
+  return cats.find((cat) => cat.id === breedId)
+    ?? cats.find((cat) => cat.id === DEFAULT_CAT_BREED)
+    ?? MIAOMIAO_SKIN;
+}
+
 export const DEFAULT_BUILTIN_CATS: CatSkinConfig[] = [
   {
     id: 'black',
@@ -303,4 +315,5 @@ export const DEFAULT_BUILTIN_CATS: CatSkinConfig[] = [
     accentColor: '#5cc8ff',
     accentSideColor: '#2563eb',
   },
+  MIAOMIAO_SKIN,
 ];

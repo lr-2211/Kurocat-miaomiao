@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { MIAOMIAO_ID } from './catSkins';
 import type { CatSkinConfig, CatSpot } from './catSkins';
 
 const MAX_CUSTOM_SPOTS = 16;
@@ -347,6 +348,7 @@ export function resolveFurPalette3D(skin: CatSkinConfig, style: RenderStyle3D): 
   }
   {
       const pat = skin.pattern || 'solid';
+      const miaomiao = skin.id === MIAOMIAO_ID;
       const furHex = parseRgbOrHexColor(skin.furColor, '#f2a452').hex;
       const c = new THREE.Color(furHex);
       const isDark = 0.299 * c.r + 0.587 * c.g + 0.114 * c.b < 0.16;
@@ -383,14 +385,14 @@ export function resolveFurPalette3D(skin: CatSkinConfig, style: RenderStyle3D): 
             : null,
         blush: blushParsed,
         inner: parseRgbOrHexColor(skin.earInnerColor, '#f0bcc0').hex,
-        stripes: pat === 'tabby' ? 1 : 0,
-        muzzle: pat === 'tabby' || pat === 'bicolor' || pat === 'tuxedo' ? 1 : 0,
-        bib: skin.bellyBibColor || pat === 'bicolor' || pat === 'tuxedo' ? 1 : 0,
+        stripes: !miaomiao && pat === 'tabby' ? 1 : 0,
+        muzzle: !miaomiao && (pat === 'tabby' || pat === 'bicolor' || pat === 'tuxedo') ? 1 : 0,
+        bib: !miaomiao && (skin.bellyBibColor || pat === 'bicolor' || pat === 'tuxedo') ? 1 : 0,
         calico: pat === 'calico' ? 1 : 0,
         tuxedo: pat === 'tuxedo' || pat === 'bicolor' ? 1 : 0,
         points: pat === 'siamese' || pat === 'bicolor' ? 1 : 0,
         innerAmt: skin.earInnerColor ? 0.9 : 0,
-        shade: is3D ? 0.86 : 0,
+        shade: is3D ? (miaomiao ? 0.72 : 0.86) : 0,
         paw: parseRgbOrHexColor(skin.pawColor || furHex, '#faf8f2').hex,
         pawTuckLine: isDark ? 'rgba(182, 188, 198, 0.34)' : 'rgba(110, 98, 90, 0.28)',
         toe: '#bdb5aa',
@@ -425,6 +427,7 @@ export class FurShaderSystem {
   constructor() {
     this.uniforms = {
       uFur: { value: new THREE.Color('#141315') },
+      uMiaomiao: { value: 0 },
       uLight: { value: new THREE.Color('#f7f5ee') },
       uDark: { value: new THREE.Color('#141315') },
       uPatchA: { value: new THREE.Color('#141315') },
@@ -565,7 +568,7 @@ export class FurShaderSystem {
 
     const fragmentShader = `
       uniform vec3 uFur, uLight, uDark, uPatchA, uPatchB, uPoint, uInner, uPawColor, uEarOuter, uEarTip, uArmColor, uTailBase, uTailTip;
-      uniform float uStripes, uMuzzle, uBib, uCalico, uTuxedo, uPoints, uInnerAmt, uShade, uIsDarkFur, uEarOuterAmt, uEarTipAmt, uArmColorAmt, uTailBaseAmt, uTailTipAmt, uTailStripes;
+      uniform float uStripes, uMuzzle, uBib, uCalico, uTuxedo, uPoints, uInnerAmt, uShade, uIsDarkFur, uEarOuterAmt, uEarTipAmt, uArmColorAmt, uTailBaseAmt, uTailTipAmt, uTailStripes, uMiaomiao;
       uniform int uSpotCount;
       uniform vec4 uSpotPos[${MAX_CUSTOM_SPOTS}];
       uniform vec4 uSpotCol[${MAX_CUSTOM_SPOTS}];
@@ -592,6 +595,56 @@ export class FurShaderSystem {
         float d = abs(f - 0.5);
         return 1.0 - smoothstep(fill * 0.5 - 0.03, fill * 0.5, d);
       }
+
+      #ifdef CAT_BODY
+      vec3 miaomiaoCoat(vec3 p, vec3 hp, float headZone) {
+        // Hand-placed markings from the approved three-quarter illustration.
+        // Rest-space coordinates keep the coat locked to the deforming 3D surface.
+        float hip = 1.0 - smoothstep(0.31, 1.28, p.y);
+        float angle = atan(p.x + 0.28 * hip, p.z);
+        float shiftedAngle = angle - 0.10 + 0.07 * sin(p.y * 10.0);
+        float flank = smoothstep(0.62, 1.35, abs(shiftedAngle));
+        float streak = p.y * 0.83 + 0.12 * sin(angle * 1.78 + p.y * 3.7)
+                     + 0.024 * sin(angle * 8.0 - p.y * 6.0);
+        float bands = rings(streak, 4.3, 0.36 + 0.25 * flank);
+        float ochre = 0.56 + 0.43 * sin(streak * 19.0 - angle * 0.95);
+        vec3 body = mix(uFur, uPatchA, ochre * flank);
+        body = mix(body, uDark, bands * flank * smoothstep(0.12, 0.30, p.y));
+        float bibW = mix(1.02, 1.21, smoothstep(0.25, 1.26, p.y)) + 0.06 * sin(p.y * 14.0);
+        float bib = 1.0 - smoothstep(bibW - 0.14, bibW + 0.03, abs(shiftedAngle));
+        float belly = (1.0 - smoothstep(0.09, 0.32, p.y + 0.065 * sin(angle * 2.2))) * 0.88;
+        body = mix(body, uLight, max(bib, belly));
+
+        vec2 face = hp.xy;
+        face.x += 0.014 * sin(face.y * 22.0) + 0.007 * sin(face.y * 46.0);
+        float front = smoothstep(-0.22, 0.29, hp.z);
+        // The viewer-left brow is smaller and brown. The orange on the other
+        // side reaches around the outer eye and across the temple.
+        float brownBrow = blob(face, vec2(-0.58, 0.43), vec2(0.40, 0.31));
+        float orangeTemple = blob(face, vec2(0.64, 0.34), vec2(0.54, 0.43));
+        float orangeEye = blob(face, vec2(0.42, 0.13), vec2(0.26, 0.25));
+        vec3 head = mix(uFur, uPatchB, brownBrow * front);
+        head = mix(head, uPatchA, max(orangeTemple, orangeEye * 0.94) * front);
+        float crown = blob(face, vec2(-0.08, 0.83), vec2(0.50, 0.61));
+        head = mix(head, uDark, crown * 0.38);
+        float tabby = stroke(face, vec2(-0.34, 0.88), vec2(-0.18, 0.38), 0.121, 0.40);
+        tabby = max(tabby, stroke(face, vec2(-0.12, 0.95), vec2(-0.08, 0.42), 0.072, 0.33));
+        tabby = max(tabby, stroke(face, vec2(0.11, 0.96), vec2(0.13, 0.34), 0.078, 0.37));
+        tabby = max(tabby, stroke(face, vec2(0.34, 0.92), vec2(0.28, 0.43), 0.097, 0.35));
+        tabby = max(tabby, stroke(face, vec2(-0.84, 0.13), vec2(-0.45, 0.20), 0.078, 0.38));
+        tabby = max(tabby, stroke(face, vec2(0.98, 0.11), vec2(0.52, 0.20), 0.055, 0.28));
+        head = mix(head, uDark, tabby * front * 0.92);
+        float muzzleEdge = -0.04 - 0.24 * pow(abs(face.x), 1.65) + 0.035 * sin(face.x * 12.0)
+                         + 0.08 * smoothstep(0.18, 0.62, -face.x);
+        float muzzle = (1.0 - smoothstep(muzzleEdge - 0.035, muzzleEdge + 0.065, face.y)) * front;
+        float blazeWidth = mix(0.23, 0.043, smoothstep(-0.22, 0.39, face.y));
+        float blazeX = abs(face.x - 0.035 + 0.032 * sin(face.y * 7.6));
+        float blaze = (1.0 - smoothstep(blazeWidth * 0.76, blazeWidth + 0.023, blazeX))
+                    * (1.0 - smoothstep(0.34, 0.49, face.y)) * front;
+        head = mix(head, uLight, max(muzzle, blaze));
+        return mix(body, head, headZone);
+      }
+      #endif
 
       void main() {
         vec3 col = uFur;
@@ -745,9 +798,18 @@ export class FurShaderSystem {
           col = mix(col, uPatchA, pa * uCalico);
           col = mix(col, uPatchB, pb * uCalico);
           col = mix(col, uPoint, point * uPoints);
-          col = mix(col, uDark, dark);
+          #ifdef TAIL
+            vec3 ringColor = mix(uDark, uTailTip, uMiaomiao * uTailTipAmt);
+            col = mix(col, ringColor, dark);
+          #else
+            col = mix(col, uDark, dark);
+          #endif
           col = mix(col, uLight, light);
           col = mix(col, uInner, inner * uInnerAmt);
+
+          #ifdef CAT_BODY
+            if (uMiaomiao > 0.5) col = miaomiaoCoat(p, hp, headZone);
+          #endif
 
           // Full MCP custom spots/birthmarks support on head, body, leftArm, and rightArm!
           if (uSpotCount > 0) {
@@ -804,8 +866,20 @@ export class FurShaderSystem {
 
         #ifdef TAIL
           // Fluffy tail tip colour (vAlong: 0 at root -> 1 at tip), feathered over the last stretch
-          col = mix(col, uTailTip, smoothstep(0.70, 0.90, vAlong) * uTailTipAmt);
+          float tipStart = mix(0.70, 0.88, uMiaomiao);
+          float tipEnd = mix(0.90, 0.95, uMiaomiao);
+          col = mix(col, uTailTip, smoothstep(tipStart, tipEnd, vAlong) * uTailTipAmt);
         #endif
+
+        if (uMiaomiao > 0.5) {
+          // Subtle fur grain breaks up the smoothly shaded material without changing its silhouette.
+          vec3 fibre = p * vec3(124.0, 41.0, 113.0);
+          vec3 cell = floor(fibre);
+          float strand = fract(sin(dot(cell, vec3(12.9898, 78.233, 37.719))) * 43758.5453) - 0.5;
+          float fade = 1.0 - smoothstep(0.35, 1.05, length(fwidth(fibre)));
+          float clump = sin(p.x * 38.0 + p.z * 29.0) * sin(p.y * 33.0 - p.z * 16.0);
+          col *= 1.0 + strand * 0.055 * fade + clump * 0.017;
+        }
 
         // Designer-vinyl / soft matte-velvet 3D studio lighting (inspired by KuroCat app icon — ZERO KeyCat white outline!)
         vec3 n = normalize(vNormal);
@@ -864,6 +938,7 @@ export class FurShaderSystem {
       (this.uniforms[key].value as THREE.Color).set(hex);
     };
     setColor('uFur', p.fur);
+    this.uniforms.uMiaomiao.value = p.id === MIAOMIAO_ID ? 1 : 0;
     setColor('uLight', p.light);
     setColor('uDark', p.dark);
     setColor('uPatchA', p.patchA);

@@ -36,6 +36,12 @@
     "active": true,
     "targets": "all",
     "publisher": "KuroCat",
+    "license": "MIT",
+    "licenseFile": "../LICENSE",
+    "resources": {
+      "../LICENSE": "licenses/KuroCat-MIT.txt",
+      "../src/assets/dafeiyu/LICENSE-MIT.txt": "licenses/DaFeiYu-MIT.txt"
+    },
     "shortDescription": "Minimalist desktop cat typing & mouse companion",
     "icon": [
       "icons/32x32.png",

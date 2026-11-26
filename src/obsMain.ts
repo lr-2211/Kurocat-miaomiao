@@ -6,7 +6,7 @@ import {
 } from './catEngine';
 import { catAudio } from './audio';
 import { AgentCompanionController, type AgentCompanionEvent } from './agentCompanion';
-import { DEFAULT_BUILTIN_CATS, type CatSkinConfig } from './catSkins';
+import { catOrDefault, DEFAULT_BUILTIN_CATS, DEFAULT_CAT_BREED, type CatSkinConfig } from './catSkins';
 import type { KeyboardLayoutId } from './keyboardLayout';
 import type { CollarColorId, KuroCatEngine3D } from './catEngine3d';
 
@@ -101,7 +101,7 @@ let catList: CatSkinConfig[] = [...DEFAULT_BUILTIN_CATS];
 let currentSettings: ObsAppSettings = {
   scale: 1,
   showKeyBubbles: true,
-  catBreed: 'black',
+  catBreed: DEFAULT_CAT_BREED,
   keyboardLayout: '65',
   keyboardOrientation: 'cat',
   tailKeyMode: 'smart',
@@ -184,8 +184,8 @@ function syncObs3D(
 }
 
 function applyState(): void {
-  const breedId = overrideBreed || currentSettings.catBreed || 'black';
-  const activeCat = catList.find((c) => c.id === breedId) ?? catList[0];
+  const breedId = overrideBreed || currentSettings.catBreed || DEFAULT_CAT_BREED;
+  const activeCat = catOrDefault(catList, breedId);
   const layout: KeyboardLayoutId =
     overrideLayout || (currentSettings.keyboardLayout === '108' ? '108' : '65');
   const orient: KeyboardOrientation =
@@ -213,7 +213,7 @@ function applyState(): void {
       : 'none');
 
   engine.showKeyBubbles = showBubbles;
-  engine.setCatAppearance(activeCat?.id || 'black', activeCat);
+  engine.setCatAppearance(activeCat.id, activeCat);
   engine.setHeadphones(computeObsHeadphonesOn(activeCat));
   engine.setKeyboardConfig(layout, orient);
   engine.setTailKeyConfig(tailMode, tailIds);

@@ -22,9 +22,9 @@ const WIN7_OFFSCREEN_PARK_POS: i32 = -16000;
 
 use cats::{all_cats, cat_exists, cats_path, sanitize_cat_id, CatSkinConfig};
 use config::{
-    config_path, load_settings, normalize_keyboard_layout, normalize_keyboard_orientation,
-    normalize_tail_key_ids, normalize_tail_key_mode, save_settings, set_windows_autostart,
-    try_save_settings, AppSettings,
+    config_path, default_cat_breed, load_settings, normalize_keyboard_layout,
+    normalize_keyboard_orientation, normalize_tail_key_ids, normalize_tail_key_mode, save_settings,
+    set_windows_autostart, try_save_settings, AppSettings,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -534,7 +534,7 @@ fn update_settings(app: AppHandle, state: State<'_, AppState>, mut patch: AppSet
     patch.cat_breed = if cat_exists(&clean_breed) {
         clean_breed
     } else {
-        "black".to_string()
+        default_cat_breed()
     };
     if patch.mcp_port == 0 {
         patch.mcp_port = 27420;
@@ -1177,7 +1177,7 @@ pub fn apply_breed_and_save(app: &AppHandle, breed: &str) {
     let normalized = if cat_exists(&clean) {
         clean
     } else {
-        "black".to_string()
+        default_cat_breed()
     };
     let state = app.state::<AppState>();
     let updated = {

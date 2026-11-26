@@ -2,7 +2,7 @@ use crate::cats::{
     all_cats, cat_exists, cat_schema_guide, cats_path, delete_custom_cat, patch_custom_cat,
     sanitize_cat_id, upsert_custom_cat, CatSkinConfig,
 };
-use crate::config::{load_settings, save_settings, set_windows_autostart};
+use crate::config::{default_cat_breed, load_settings, save_settings, set_windows_autostart};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::io::{BufRead, BufReader, IsTerminal, Read, Write};
@@ -926,7 +926,7 @@ fn execute_tool(
                     if removed {
                         let mut s = load_settings();
                         if s.cat_breed == id && !cat_exists(&id) {
-                            s.cat_breed = "black".to_string();
+                            s.cat_breed = default_cat_breed();
                             save_settings(&s);
                         }
                         on_change();
